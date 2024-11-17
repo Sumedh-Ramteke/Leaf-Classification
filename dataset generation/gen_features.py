@@ -2,7 +2,7 @@ import os
 import csv
 import cv2
 import pandas as pd
-from features import extract_features
+from features1 import extract_features
 
 # Path to your folders
 train_folder = 'converted/train/'
