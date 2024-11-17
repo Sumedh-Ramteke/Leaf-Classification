@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 10
+names: ['Ajwain', 'Almond', 'Ashoka', 'DrumStick', 'Fittonia', 'Hibiscus', 'JackFruit', 'Mango', 'Neem', 'Parijat']
+
+roboflow:
+  workspace: leaf-m8ktq
+  project: leaf-labelling
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/leaf-m8ktq/leaf-labelling/dataset/2

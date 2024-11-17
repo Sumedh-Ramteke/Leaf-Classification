@@ -1,5 +1,8 @@
 import cv2
 import numpy as np
+from scipy.fftpack import fft
+from scipy.stats import skew
+import mahotas
 
 # Function to compute brightness (mean)
 def brightness(image):
@@ -11,8 +14,7 @@ def contrast(image):
 
 # Function to compute skewness
 def skewness(image):
-    mean = np.mean(image)
-    return np.sum((image - mean) ** 3) / (image.size * np.std(image) ** 3)
+    return skew(image.flatten())
 
 # Function to compute kurtosis
 def kurtosis(image):
@@ -83,86 +85,54 @@ def correlation_from_glcm(glcm):
     std_y = np.sqrt(np.sum((np.arange(glcm.shape[1]) - mean_y) ** 2 * np.sum(glcm, axis=0)))
     return np.sum((glcm - mean_x) * (glcm.T - mean_y)) / (std_x * std_y)
 
-def variance_from_glcm(glcm):
-    return np.var(glcm)
+def zernike_moments(image, radius=250, degree=8):
+    h, w = image.shape
+    crop_size = min(h, w)
+    image_cropped = image[:crop_size, :crop_size]
 
-def sum_average(glcm):
-    row_sums = np.sum(glcm, axis=1)
-    col_sums = np.sum(glcm, axis=0)
-    return np.sum(np.arange(glcm.shape[0]) * (row_sums + col_sums))
+    image_cropped = image_cropped / 255.0
 
-def sum_variance(glcm, sum_average_val):
-    row_sums = np.sum(glcm, axis=1)
-    col_sums = np.sum(glcm, axis=0)
-    return np.sum((np.arange(glcm.shape[0]) - sum_average_val) ** 2 * (row_sums + col_sums))
+    moments = mahotas.features.zernike_moments(image_cropped, radius=radius, degree=degree)
+    return moments
 
-def sum_entropy(glcm):
-    return -np.sum(np.sum(glcm, axis=1) * np.log(np.sum(glcm, axis=1) + 1e-10))
+# Fast Fourier Transform (FFT)
+def fft_features(image):
+    f = np.fft.fft2(image)
+    fshift = np.fft.fftshift(f)
+    magnitude_spectrum = np.abs(fshift)
+    return np.mean(magnitude_spectrum), np.std(magnitude_spectrum)
 
-def difference_average(glcm):
-    return np.mean(np.abs(np.arange(glcm.shape[0])[:, None] - np.arange(glcm.shape[1])) * glcm)
+# Chaincode calculation
+def chaincode(image):
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if len(contours) > 0:
+        contour = contours[0].reshape(-1, 2)
+        chain = []
+        for i in range(1, len(contour)):
+            dx = contour[i][0] - contour[i-1][0]
+            dy = contour[i][1] - contour[i-1][1]
+            angle = np.arctan2(dy, dx) * 180 / np.pi
+            chain.append(angle)
+        return np.mean(chain)
+    return None
 
-def difference_variance(glcm):
-    return np.var(np.sum(glcm, axis=1))
+# Function to compute eccentricity
+def eccentricity(image):
+    moments = cv2.moments(image)
+    if moments["mu02"] != 0:
+        value = 1 - (moments["mu20"] / moments["mu02"])
+        if value < 0:
+            # Log a warning or handle gracefully
+            print(f"Warning: Negative value encountered for eccentricity calculation: {value}")
+            return 0  # Return a default value for negative inputs
+        ecc = np.sqrt(value)
+        return ecc
+    return 0
 
-def difference_entropy(glcm):
-    return -np.sum(np.sum(glcm, axis=1) * np.log(np.sum(glcm, axis=1) + 1e-10))
-
-def information_measure_I(glcm):
-    hx = entropy_from_glcm(glcm)
-    hy = sum_entropy(glcm)
-    return hx / max(hx, hy)
-
-def information_measure_II(glcm):
-    return np.log(np.sum(np.sum(glcm)))
-
-def maximal_correlation_coefficient(glcm):
-    return np.max(glcm)
-
-def short_run_emphasis(glcm):
-    return np.sum(glcm[glcm < 2])  # For example if 2 is cosidered
-
-def long_run_emphasis(glcm):
-    return np.sum(glcm[glcm > 2])  # Same criterion as above
-
-def gray_level_nonuniformity(glcm):
-    return np.sum(np.var(glcm, axis=1))
-
-# Co-occurrence Matrix (Normalized)
-def co_occurrence_matrix(image):
-    glcm = calculate_glcm(image, 1, 1)
-    return glcm / np.sum(glcm)
-
-# Covariance Matrix
-def covariance_matrix(image):
-    mean = np.mean(image)
-    return np.cov(image.flatten())  # Covariance of the flattened image
-
-# Difference of Entropy from glcm
-def difference_entropy(glcm):
-    diff_entropy = 0
-    max_gray_level = glcm.shape[0]
-
-    for d in range(max_gray_level):  # Iterate over the differences
-        for i in range(max_gray_level):
-            j = i - d  # Compute the corresponding j
-            if 0 <= j < max_gray_level:  # Ensure j is within bounds
-                p_ij = glcm[i, j]
-                if p_ij > 0:  # Only consider positive probabilities
-                    diff_entropy -= p_ij * np.log(p_ij + 1e-10)  # Add small value to avoid log(0)
-
-    return diff_entropy
-
-# Eigen Value(Second largest Eigenvalue)
-def second_largest_eigenvalue(glcm):
-    # Ensure the GLCM is normalized
-    glcm_normalized = glcm / np.sum(glcm) if np.sum(glcm) > 0 else glcm
-    
-    # Calculate eigenvalues
-    eigenvalues, _ = np.linalg.eig(glcm_normalized)
-
-    return np.partition(eigenvalues.real, -2)[-2]  # Get the second largest eigenvalue
-
+# Function to compute orientation
+def orientation(image):
+    moments = cv2.moments(image)
+    return 0.5 * np.arctan2(2 * moments["mu11"], moments["mu20"] - moments["mu02"])
 
 def extract_features(image_path):
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
@@ -177,9 +147,9 @@ def extract_features(image_path):
 
     # Resize image for consistent feature extraction
     image = cv2.resize(image, (250, 250))
-   
+
     features = {}
-    
+
     features['Brightness'] = brightness(image)
     features['Contrast'] = contrast(image)
     features['Mean'] = np.mean(image)
@@ -190,27 +160,19 @@ def extract_features(image_path):
     features['Energy'] = energy(image)
     features['Absolute Moment k=1'] = absolute_moment(image, 1)
     features['Absolute Moment k=2'] = absolute_moment(image, 2)
-    
+
     glcm = calculate_glcm(image, 1, 1)
     features['ASM'] = angular_second_moment(glcm)
     features['Contrast (GLCM)'] = contrast_from_glcm(glcm)
     features['IDF'] = inverse_difference_moment(glcm)
     features['Entropy (GLCM)'] = entropy_from_glcm(glcm)
     features['Correlation (GLCM)'] = correlation_from_glcm(glcm)
-    features['Variance (GLCM)'] = variance_from_glcm(glcm)
-    features['Sum Average'] = sum_average(glcm)
-    features['Sum Variance'] = sum_variance(glcm, features['Sum Average'])
-    features['Sum Entropy'] = sum_entropy(glcm)
-    features['Difference Average'] = difference_average(glcm)
-    features['Difference Variance'] = difference_variance(glcm)
-    features['Difference Entropy'] = difference_entropy(glcm)
-    features['Information Measure I'] = information_measure_I(glcm)
-    features['Information Measure II'] = information_measure_II(glcm)
-    features['Maximal Correlation Coefficient'] = maximal_correlation_coefficient(glcm)
-    features['Short-run Emphasis'] = short_run_emphasis(glcm)
-    features['Long-run Emphasis'] = long_run_emphasis(glcm)
-    features['Gray-level Nonuniformity'] = gray_level_nonuniformity(glcm)
-    features['Difference of Entropy'] = difference_entropy(glcm)
-    features['Second Largest Eigenvalue'] = second_largest_eigenvalue(glcm)
+
+    features['Zernike Moment'] = zernike_moments(image, 2, 2)  # Example, n=2, m=2
+    features['FFT Mean'] = fft_features(image)[0]
+    features['FFT Std'] = fft_features(image)[1]
+    features['Chaincode'] = chaincode(image)
+    features['Eccentricity'] = eccentricity(image)
+    features['Orientation'] = orientation(image)
 
     return features
